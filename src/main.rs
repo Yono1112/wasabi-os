@@ -192,7 +192,7 @@ fn init_vram(efi_system_table: &EfiSystemTable) -> Result<VramBufferInfo> {
     })
 }
 
-// ===== 四角形と点を打つ関数 =====
+// ===== 四角形と点, 直線を描く関数 =====
 
 unsafe fn unchecked_draw_point<T: Bitmap>(buf: &mut T, color: u32, x: i64, y: i64) {
     *buf.unchecked_pixel_at_mut(x, y) = color;
@@ -221,12 +221,50 @@ fn fill_rect<T: Bitmap>(buf: &mut T, color: u32, px: i64, py: i64, w: i64, h: i6
     Ok(())
 }
 
+fn calc_slope_point(da: i64, db: i64, ia: i64) -> Option<i64> {
+    if da < db {
+        None
+    } else if da == 0 {
+        Some(0)
+    } else if (0..=da).contains(&ia) {
+        Some((2 * db * ia + da) / da / 2)
+    } else {
+        None
+    }
+}
+
+fn draw_line<T: Bitmap>(buf: &mut T, color: u32, x0: i64, y0: i64, x1: i64, y1: i64) -> Result<()> {
+    if !buf.is_in_x_range(x0)
+        || !buf.is_in_x_range(x1)
+        || !buf.is_in_y_range(y0)
+        || !buf.is_in_y_range(y1)
+    {
+        return Err("Out of Range");
+    }
+
+    let dx = (x1 - x0).abs(); // x差の大きさ
+    let sx = (x1 - x0).signum(); // x方向(-1/0/+1)
+    let dy = (y1 - y0).abs(); // y差の大きさ
+    let sy = (y1 - y0).signum(); // y方向
+
+    if dx >= dy {
+        for (rx, ry) in (0..dx).flat_map(|rx| calc_slope_point(dx, dy, rx).map(|ry| (rx, ry))) {
+            draw_point(buf, color, x0 + rx * sx, y0 + ry * sy)?;
+        }
+    } else {
+        for (rx, ry) in (0..dy).flat_map(|ry| calc_slope_point(dy, dx, ry).map(|rx| (rx, ry))) {
+            draw_point(buf, color, x0 + rx * sx, y0 + ry * sy)?;
+        }
+    }
+    Ok(())
+}
+
 // ===== エントリポイント =====
 
 #[no_mangle]
 fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     // 1) VRAM 初期化（UEFI → GOP → framebuffer/size/stride）
-    let mut vram = init_vram(efi_system_table).expect("init_vram falled");
+    let mut vram = init_vram(efi_system_table).expect("init_vram failed");
 
     let vw = vram.width;
     let vh = vram.height;
@@ -236,6 +274,21 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     fill_rect(&mut vram, 0x0000ff, 128, 128, 128, 128).expect("fill_rect failed");
     for i in 0..256 {
         let _ = draw_point(&mut vram, 0x010101 * i as u32, i, i);
+    }
+
+    let grid_size: i64 = 32;
+    let rect_size: i64 = grid_size * 8;
+    for i in (0..=rect_size).step_by(grid_size as usize) {
+        let _ = draw_line(&mut vram, 0xffff00, 0, i, rect_size, i); // 横線
+        let _ = draw_line(&mut vram, 0xffff00, i, 0, i, rect_size); // 縦線
+    }
+    let cx = rect_size / 2;
+    let cy = rect_size / 2;
+    for i in (0..=rect_size).step_by(grid_size as usize) {
+        let _ = draw_line(&mut vram, 0xffff00, cx, cy, 0, i);
+        let _ = draw_line(&mut vram, 0xffff00, cx, cy, i, 0);
+        let _ = draw_line(&mut vram, 0xffff00, cx, cy, rect_size, i);
+        let _ = draw_line(&mut vram, 0xffff00, cx, cy, i, rect_size);
     }
 
     hlt_loop();
