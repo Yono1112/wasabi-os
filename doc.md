@@ -35,7 +35,7 @@ brew install llvm qemu netcat
 
 ---
 
-## 直線の描写
+## 直線の描写(p.80)
 ### 直線描画の全体フロー
 
 1. まず `efi_main` から描画命令を出す
