@@ -209,6 +209,15 @@ fn efi_main(_image_handle: EfiHandle, st: &EfiSystemTable) {
         }
     }
 
+    // 3) 左上の画面を塗り潰し（例：赤 0xff0000）
+    for y in 0..vram.height / 2 {
+        for x in 0..vram.width / 2 {
+            if let Some(pixel) = vram.pixel_at_mut(x, y) {
+                *pixel = 0xff0000;
+            }
+        }
+    }
+
     // 3) 停止
     hlt_loop();
 }
