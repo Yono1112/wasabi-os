@@ -99,9 +99,11 @@ struct EfiGraphicsOutputProtocol<'a> {
 }
 
 // GOP を SystemTable → BootServices → locate_protocol で取得
-fn locate_graphic_protocol<'a>(st: &EfiSystemTable) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
+fn locate_graphic_protocol<'a>(
+    efi_system_table: &EfiSystemTable,
+) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
     let mut gop_ptr = null_mut::<EfiGraphicsOutputProtocol>();
-    let status = (st.boot_services.locate_protocol)(
+    let status = (efi_system_table.boot_services.locate_protocol)(
         &EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
         null_mut::<EfiVoid>(),
         &mut gop_ptr as *mut *mut EfiGraphicsOutputProtocol as *mut *mut EfiVoid,
@@ -180,8 +182,8 @@ impl Bitmap for VramBufferInfo {
 }
 
 // GOP 情報から VRAM ビューを作成
-fn init_vram(st: &EfiSystemTable) -> Result<VramBufferInfo> {
-    let gp = locate_graphic_protocol(st)?;
+fn init_vram(efi_system_table: &EfiSystemTable) -> Result<VramBufferInfo> {
+    let gp = locate_graphic_protocol(efi_system_table)?;
     Ok(VramBufferInfo {
         buf: gp.mode.frame_buffer_base as *mut u8,
         width: gp.mode.info.horizontal_resolution as i64,
@@ -190,35 +192,52 @@ fn init_vram(st: &EfiSystemTable) -> Result<VramBufferInfo> {
     })
 }
 
+// ===== 四角形と点を打つ関数 =====
+
+unsafe fn unchecked_draw_point<T: Bitmap>(buf: &mut T, color: u32, x: i64, y: i64) {
+    *buf.unchecked_pixel_at_mut(x, y) = color;
+}
+
+fn draw_point<T: Bitmap>(buf: &mut T, color: u32, x: i64, y: i64) -> Result<()> {
+    *(buf.pixel_at_mut(x, y).ok_or("Out of Range")?) = color;
+    Ok(())
+}
+
+fn fill_rect<T: Bitmap>(buf: &mut T, color: u32, px: i64, py: i64, w: i64, h: i64) -> Result<()> {
+    if !buf.is_in_x_range(px)
+        || !buf.is_in_y_range(py)
+        || !buf.is_in_x_range(px + w - 1)
+        || !buf.is_in_y_range(py + h - 1)
+    {
+        return Err("Out of Range");
+    }
+    for y in py..py + h {
+        for x in px..px + w {
+            unsafe {
+                unchecked_draw_point(buf, color, x, y);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ===== エントリポイント =====
 
 #[no_mangle]
-fn efi_main(_image_handle: EfiHandle, st: &EfiSystemTable) {
+fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     // 1) VRAM 初期化（UEFI → GOP → framebuffer/size/stride）
-    let mut vram = match init_vram(st) {
-        Ok(v) => v,
-        Err(_) => hlt_loop(),
-    };
+    let mut vram = init_vram(efi_system_table).expect("init_vram falled");
 
-    // 2) 全画面塗りつぶし（例：緑 0x00ff00）
-    for y in 0..vram.height() {
-        for x in 0..vram.width() {
-            if let Some(px) = vram.pixel_at_mut(x, y) {
-                *px = 0x00ff00; // ※BGR 環境では色が入れ替わることがあります
-            }
-        }
+    let vw = vram.width;
+    let vh = vram.height;
+    fill_rect(&mut vram, 0x000000, 0, 0, vw, vh).expect("fill_rect failed");
+    fill_rect(&mut vram, 0xff0000, 32, 32, 32, 32).expect("fill_rect failed");
+    fill_rect(&mut vram, 0x00ff00, 64, 64, 64, 64).expect("fill_rect failed");
+    fill_rect(&mut vram, 0x0000ff, 128, 128, 128, 128).expect("fill_rect failed");
+    for i in 0..256 {
+        let _ = draw_point(&mut vram, 0x010101 * i as u32, i, i);
     }
 
-    // 3) 左上の画面を塗り潰し（例：赤 0xff0000）
-    for y in 0..vram.height / 2 {
-        for x in 0..vram.width / 2 {
-            if let Some(pixel) = vram.pixel_at_mut(x, y) {
-                *pixel = 0xff0000;
-            }
-        }
-    }
-
-    // 3) 停止
     hlt_loop();
 }
 
