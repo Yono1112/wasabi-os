@@ -96,3 +96,46 @@ brew install llvm qemu netcat
 
 ---
 
+## writelnマクロの挙動 by ChatGPT(p.93)
+
+### 呼び出しの流れ
+1. `writeln!(w, "vw: {vw}")`を展開して `fmt::write(&mut w, args)` が呼ばれる。
+1. `fmt::write` は `args` を1文字列ずつ展開しながら `w.write_str(..)` を呼ぶ。
+1. `w` が `VramTextWriter` なので、あなたの定義した `write_str` が実行される。
+
+### 仕組みの整理
+1. **`fmt::write` は固定の関数**
+
+   * 標準ライブラリにある既製の関数です。
+   * これ自体を「上書き」したり「再定義」したりすることはありません。
+
+   ```rust
+   pub fn write(output: &mut impl Write, args: Arguments) -> Result { ... }
+   ```
+
+   * `output` には `fmt::Write` トレイトを実装した型が来ます。
+
+2. **自分の型で `fmt::Write` を実装**
+
+   * あなたは `VramTextWriter` に対して
+
+     ```rust
+     impl fmt::Write for VramTextWriter<'_> {
+         fn write_str(&mut self, s: &str) -> fmt::Result {
+             // VRAM に描画する処理
+         }
+     }
+     ```
+
+     を書きました。
+
+   * これにより **「`fmt::write` が `output.write_str(..)` を呼ぶとき、VRAM用の実装が使われる」** という仕組みになっています。
+
+### 例えで言うと…
+
+* `fmt::write` は「フォーマット済みの文字を一文字列ずつ **出力装置に送る仕組み**」。
+* `fmt::Write` は「その出力装置をどう扱うか決めるインターフェース」。
+* あなたは「出力装置」を「VRAM」にした、という感じです。
+
+---
+
