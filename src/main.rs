@@ -127,6 +127,7 @@ impl MemoryMapHolder {
 
 #[repr(C)]
 struct EfiBootServicesTable {
+    // UEFI(x86_64) は Microsoft x64 ABI
     _reserved0: [u64; 7],
     get_memory_map: extern "win64" fn(
         memory_map_size: *mut usize,
@@ -135,8 +136,9 @@ struct EfiBootServicesTable {
         descriptor_size: *mut usize,
         descriptor_version: *mut u32,
     ) -> EfiStatus,
-    _reserved1: [u64; 32],
-    // UEFI(x86_64) は Microsoft x64 ABI
+    _reserved1: [u64; 21],
+    exit_boot_services: extern "win64" fn(image_handle: EfiHandle, map_key: usize) -> EfiStatus,
+    _reserved4: [u64; 10],
     locate_protocol: extern "win64" fn(
         protocol: *const EfiGuid,
         registration: *const EfiVoid,
@@ -158,6 +160,7 @@ impl EfiBootServicesTable {
 // 仕様どおりのオフセット確認（壊れていないかをビルド時に検査）
 const _: () = assert!(offset_of!(EfiBootServicesTable, locate_protocol) == 320);
 const _: () = assert!(offset_of!(EfiBootServicesTable, get_memory_map) == 56);
+const _: () = assert!(offset_of!(EfiBootServicesTable, exit_boot_services) == 232);
 
 #[repr(C)]
 struct EfiSystemTable {
@@ -165,6 +168,22 @@ struct EfiSystemTable {
     boot_services: &'static EfiBootServicesTable,
 }
 const _: () = assert!(offset_of!(EfiSystemTable, boot_services) == 96);
+
+fn exit_from_efi_boot_services(
+    image_handle: EfiHandle,
+    efi_system_table: &EfiSystemTable,
+    memory_map: &mut MemoryMapHolder,
+) {
+    loop {
+        let status = efi_system_table.boot_services.get_memory_map(memory_map);
+        assert_eq!(status, EfiStatus::Success);
+        let status =
+            (efi_system_table.boot_services.exit_boot_services)(image_handle, memory_map.map_key);
+        if status == EfiStatus::Success {
+            break;
+        }
+    }
+}
 
 // ===== Graphics Output Protocol（必要最小限の定義）=====
 
@@ -463,7 +482,7 @@ fn draw_test_pattern<T: Bitmap>(buf: &mut T) {
 // ===== エントリポイント =====
 
 #[no_mangle]
-fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
+fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     // VRAM 初期化（UEFI → GOP → framebuffer/size/stride）
     let mut vram = init_vram(efi_system_table).expect("init_vram failed");
     let vw = vram.width;
@@ -491,7 +510,7 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
             continue;
         }
         total_memory_pages += e.number_of_pages;
-        writeln!(w, "{e:?}").unwrap();
+        // writeln!(w, "{e:?}").unwrap();
     }
     let total_memory_size_mib = total_memory_pages * 4096 / 1024 / 1024;
     writeln!(
@@ -499,6 +518,9 @@ fn efi_main(_image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
         "Total: {total_memory_pages} pages = {total_memory_size_mib} MiB"
     )
     .unwrap();
+
+    exit_from_efi_boot_services(image_handle, efi_system_table, &mut memory_map);
+    writeln!(w, "Hello Non-UEFI world!").unwrap();
 
     hlt_loop();
 }
