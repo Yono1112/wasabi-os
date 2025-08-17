@@ -3,13 +3,14 @@
 #![no_main]
 #![feature(offset_of)]
 
-use core::arch::asm;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::writeln;
 use wasabi_os::graphics::draw_test_pattern;
 use wasabi_os::graphics::fill_rect;
 use wasabi_os::graphics::Bitmap;
+use wasabi_os::qemu::exit_qemu;
+use wasabi_os::qemu::QemuExitCode;
 use wasabi_os::uefi::exit_from_efi_boot_services;
 use wasabi_os::uefi::init_vram;
 use wasabi_os::uefi::EfiHandle;
@@ -17,13 +18,7 @@ use wasabi_os::uefi::EfiMemoryType;
 use wasabi_os::uefi::EfiSystemTable;
 use wasabi_os::uefi::MemoryMapHolder;
 use wasabi_os::uefi::VramTextWriter;
-
-#[inline(always)]
-fn hlt_loop() -> ! {
-    loop {
-        unsafe { asm!("hlt", options(nomem, nostack, preserves_flags)) }
-    }
-}
+use wasabi_os::x86::hlt;
 
 // ===== エントリポイント =====
 
@@ -68,12 +63,14 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     exit_from_efi_boot_services(image_handle, efi_system_table, &mut memory_map);
     writeln!(w, "Hello Non-UEFI world!").unwrap();
 
-    hlt_loop();
+    loop {
+        hlt()
+    }
 }
 
 // ===== パニックハンドラ =====
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    hlt_loop()
+    exit_qemu(QemuExitCode::Fail);
 }
